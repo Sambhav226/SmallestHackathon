@@ -24,7 +24,8 @@ def transcribe_audio_deepgram(file_bytes: bytes, filename: str = 'audio.wav') ->
     params = {
         # Prefer smart_format (punctuation, capitalization, numbers, dates, etc.)
         'smart_format': 'true',
-        'model': os.environ.get('DEEPGRAM_MODEL', 'nova-2'),
+        'language': 'multi',
+        'model': os.environ.get('DEEPGRAM_MODEL', 'nova-3'),
     }
     try:
         # Use detect_language for auto language detection if not explicitly set via env

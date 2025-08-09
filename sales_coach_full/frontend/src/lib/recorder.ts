@@ -18,6 +18,21 @@ export class MicRecorder {
     this.mediaRecorder.start(timeslice);
   }
 
+  async startBuffered(onComplete: (blob: Blob) => void, opts: RecorderOptions = {}): Promise<void> {
+    const mimeType = opts.mimeType ?? 'audio/webm';
+    this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const chunks: BlobPart[] = [];
+    this.mediaRecorder = new MediaRecorder(this.stream, { mimeType });
+    this.mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) chunks.push(e.data);
+    };
+    this.mediaRecorder.onstop = () => {
+      const blob = new Blob(chunks, { type: mimeType });
+      onComplete(blob);
+    };
+    this.mediaRecorder.start();
+  }
+
   stop(): void {
     if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
       this.mediaRecorder.stop();

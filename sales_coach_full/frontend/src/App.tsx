@@ -74,8 +74,16 @@ export default function App() {
     if (!sessionId || !blob) return;
     setUploading(true);
     try {
-      const { transcript, reply_text } = await uploadAudio(sessionId, blob);
+      const { transcript, reply_text, tts_base64 } = await uploadAudio(sessionId, blob);
       setMessages((m) => [...m, { role: "rep", text: transcript }, { role: "customer", text: reply_text }]);
+      if (tts_base64) {
+        try {
+          // backend may return wav/mp3; default to wav here
+          await import('./lib/audio').then(({ playBase64Audio }) => playBase64Audio(tts_base64, 'audio/wav'))
+        } catch {
+          // ignore playback errors (e.g., autoplay policy)
+        }
+      }
     } finally {
       setUploading(false);
     }
