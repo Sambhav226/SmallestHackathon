@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+pydantic
+# optional: smallestai (install to enable real API usage)
+# smallestai
+# optional: openai (if you want to use OpenAI for analysis)
+# openai
