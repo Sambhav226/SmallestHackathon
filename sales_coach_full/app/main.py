@@ -21,20 +21,23 @@ class MessageReq(BaseModel):
     text: str
 
 SMALLEST_API_KEY = os.environ.get("SMALLEST_API_KEY")
-app = FastAPI(title="Sales Coach Backend (mockable)")
+app = FastAPI(title="Sales Coach Backend")
 
 # Enable CORS for local frontend dev
+frontend_origins = [
+    os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173"),
+    "http://127.0.0.1:5173",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten in prod
+    allow_origins=frontend_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Force mock unless user sets SMALLEST_API_KEY
-force_mock = False if SMALLEST_API_KEY else True
-smallest = SmallestClientWrapper(api_key=SMALLEST_API_KEY, force_mock=force_mock)
+# Require real Smallest.ai SDK and API key
+smallest = SmallestClientWrapper(api_key=SMALLEST_API_KEY)
 session_mgr = SessionManager(smallest)
 
 @app.get("/personas")
@@ -65,11 +68,21 @@ async def upload_audio(session_id: str, file: UploadFile = File(...)):
     transcript = transcribe_audio_deepgram(content, filename=file.filename)
     # store as rep message (assumes rep spoke)
     session_mgr.sessions[session_id]['messages'].append({'role':'rep','text': transcript})
-    # Now get agent reply
+    # Now attempt agent reply (optional)
     agent_id = session_mgr.sessions[session_id]['agent_id']
-    reply = smallest.converse_text(agent_id, transcript)
-    session_mgr.sessions[session_id]['messages'].append({'role':'customer','text':reply})
-    tts_b64 = smallest.synthesize_tts_base64(reply)
+    reply = ""
+    tts_b64 = ""
+    try:
+        reply = smallest.converse_text(agent_id, transcript)
+        if reply:
+            session_mgr.sessions[session_id]['messages'].append({'role':'customer','text':reply})
+            try:
+                tts_b64 = smallest.synthesize_tts_base64(reply)
+            except Exception:
+                tts_b64 = ""
+    except Exception:
+        reply = ""
+        tts_b64 = ""
     return {'transcript': transcript, 'reply_text': reply, 'tts_base64': tts_b64}
 
 @app.post("/sessions/{session_id}/end")

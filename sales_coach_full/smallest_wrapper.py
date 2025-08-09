@@ -60,94 +60,70 @@ class MockSmallestClient:
 class SmallestClientWrapper:
     def __init__(self, api_key=None, force_mock=False):
         self.api_key = api_key or os.environ.get("SMALLEST_API_KEY")
-        self.force_mock = force_mock
-        self._use_mock = force_mock
-        self._client = None
+        if not self.api_key:
+            raise RuntimeError("SMALLEST_API_KEY not set")
+        try:
+            # Use Atoms with explicit Configuration taking access_token from env/key
+            from smallestai.atoms.atoms_client import AtomsClient  # type: ignore
+            from smallestai.atoms.configuration import Configuration  # type: ignore
+            from smallestai.waves.waves_client import WavesClient  # type: ignore
 
-        if not self._use_mock:
-            try:
-                # Try to import official SDK
-                from smallestai.atoms import AtomsClient  # type: ignore
-                from smallestai.waves import WavesClient  # type: ignore
-                # instantiate real clients
-                self.atoms_client = AtomsClient(api_key=self.api_key)
-                self.waves_client = WavesClient(api_key=self.api_key)
-                self._use_mock = False
-                self._client = None
-            except Exception as e:
-                print("smallestai SDK not available or failed to import; using Mock client.", file=sys.stderr)
-                self._use_mock = True
-                self._client = MockSmallestClient()
-        else:
-            self._use_mock = True
-            self._client = MockSmallestClient()
+            atoms_config = Configuration(access_token=self.api_key)
+            self.atoms_client = AtomsClient(configuration=atoms_config)
+            # WavesClient accepts api_key directly
+            self.waves_client = WavesClient(api_key=self.api_key)
+        except Exception as e:
+            raise RuntimeError(f"smallestai SDK not available or failed to import: {e}")
 
     def create_agent(self, display_name, persona_prompt, voice_config=None):
-        if self._use_mock:
-            return self._client.create_agent(display_name, persona_prompt, voice_config)
-        else:
-            # Real SDK call: create an agent using AtomsClient
-            # The exact payload keys may vary with SDK version; refer to Smallest.ai docs.
-            payload = {
-                "display_name": display_name,
-                "globalPrompt": persona_prompt,
-            }
-            if voice_config:
-                payload["synthesizer"] = {"voiceConfig": voice_config}
-            try:
-                resp = self.atoms_client.create_agent(payload)
-                # depending on SDK, resp may have different shape; normalize
-                agent_id = None
-                if isinstance(resp, dict):
-                    agent_id = resp.get('id') or resp.get('agent_id') or resp.get('data', {}).get('id')
-                return {"agent_id": agent_id or 'real-agent-created'}
-            except Exception as e:
-                # fallback
-                return {"agent_id": 'real-agent-placeholder', "error": str(e)}
+        # Build request model per SDK
+        try:
+            from smallestai.atoms.models.create_agent_request import CreateAgentRequest  # type: ignore
+            req = CreateAgentRequest(name=display_name, global_prompt=persona_prompt)
+            resp = self.atoms_client.create_agent(req)
+            # Normalize id from response model/dict
+            agent_id = None
+            # pydantic models: try attributes first
+            for attr in ["id", "agent_id"]:
+                if hasattr(resp, attr):
+                    agent_id = getattr(resp, attr)
+                    break
+            if agent_id is None and hasattr(resp, "data"):
+                data = getattr(resp, "data")
+                if isinstance(data, dict):
+                    agent_id = data.get("id") or data.get("agent_id")
+                else:
+                    for attr in ["id", "agent_id"]:
+                        if hasattr(data, attr):
+                            agent_id = getattr(data, attr)
+                            break
+            return {"agent_id": agent_id or "agent-created"}
+        except Exception as e:
+            raise RuntimeError(f"create_agent_failed: {e}")
 
     def converse_text(self, agent_id, user_message):
-        if self._use_mock:
-            return self._client.converse_text(agent_id, user_message)
-        else:
-            try:
-                # Call the Atoms converse endpoint
-                # The SDK often provides a 'converse' or 'chat' method. Example:
-                resp = self.atoms_client.converse(agent_id=agent_id, input={"type":"text","text":user_message})
-                # Extract text from response
-                if isinstance(resp, dict):
-                    # Try several common fields
-                    for key in ['output', 'message', 'text', 'reply']:
-                        if key in resp:
-                            return resp[key]
-                    # Deeply check typical nested structures
-                    if 'choices' in resp and len(resp['choices'])>0:
-                        ch = resp['choices'][0]
-                        return ch.get('message', {}).get('content') or ch.get('text') or str(ch)
-                return str(resp)
-            except Exception as e:
-                return f"[converse_error] {e}"
+        # The Atoms SDK does not expose a simple text chat endpoint in this package.
+        # Raise a clear error so the API does not silently mock.
+        raise RuntimeError("Text conversation is not supported via AtomsClient SDK in this build. Implement a conversation endpoint or remove this feature.")
 
     def synthesize_tts_base64(self, text, voice_id=None):
-        if self._use_mock:
-            return self._client.synthesize_tts_base64(text, voice_id=voice_id)
-        else:
-            try:
-                # Use WavesClient to synthesize speech synchronously and return base64 audio
-                # The Waves SDK typically exposes a synthesize or tts method.
-                resp = self.waves_client.synthesize(text=text, voice_id=voice_id)
-                # resp might be bytes or dict containing 'audio'
-                if isinstance(resp, bytes):
-                    import base64
-                    return base64.b64encode(resp).decode('utf-8')
-                if isinstance(resp, dict):
-                    audio_b64 = resp.get('audio') or resp.get('data')
-                    if isinstance(audio_b64, bytes):
-                        import base64
-                        return base64.b64encode(audio_b64).decode('utf-8')
-                    return audio_b64
-                return str(resp)
-            except Exception as e:
-                return f"[tts_error] {e}"
+        resp = self.waves_client.synthesize(text=text, voice_id=voice_id)
+        if isinstance(resp, bytes):
+            import base64
+            return base64.b64encode(resp).decode('utf-8')
+        if isinstance(resp, dict):
+            audio_b64 = resp.get('audio') or resp.get('data')
+            if isinstance(audio_b64, bytes):
+                import base64
+                return base64.b64encode(audio_b64).decode('utf-8')
+            return audio_b64
+        return str(resp)
+
+    def delete_agent(self, agent_id: str) -> None:
+        try:
+            self.atoms_client.delete_agent(id=agent_id)
+        except Exception as e:
+            raise RuntimeError(f"delete_agent_failed: {e}")
 
 if __name__ == '__main__':
     print('SmallestClientWrapper module loaded')
