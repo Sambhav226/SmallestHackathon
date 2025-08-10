@@ -1,62 +1,5 @@
 import os, sys, uuid, random, json
 
-class MockSmallestClient:
-    def __init__(self):
-        self.agents = {}
-
-    def create_agent(self, display_name, persona_prompt, voice_config=None):
-        agent_id = "mock_agent_" + uuid.uuid4().hex[:8]
-        self.agents[agent_id] = {
-            "display_name": display_name,
-            "prompt": persona_prompt,
-            "voice_config": voice_config or {}
-        }
-        return {"agent_id": agent_id}
-
-    def converse_text(self, agent_id, user_message):
-        agent = self.agents.get(agent_id, {})
-        prompt = agent.get("prompt", "")
-        if "skeptic" in prompt.lower():
-            options = [
-                "Hmm... how do I know that's true?",
-                "That's a big claim. Any proof?",
-                "Short answer: not convinced."
-            ]
-            return random.choice(options)
-        if "price" in prompt.lower() or "budget" in prompt.lower():
-            options = [
-                "What's the final price?",
-                "Are there discounts?",
-                "I can buy a cheaper one elsewhere."
-            ]
-            return random.choice(options)
-        if "technical" in prompt.lower() or "specification" in prompt.lower():
-            options = [
-                "What's the exact battery capacity (mAh)?",
-                "Can you give me the benchmark numbers?",
-                "What's the range in km?"
-            ]
-            return random.choice(options)
-        if "emotional" in prompt.lower() or "testimonial" in prompt.lower():
-            options = [
-                "Does anyone I know use this?",
-                "I want to hear a story of someone who loved it.",
-                "How will this make my life better?"
-            ]
-            return random.choice(options)
-        if "delay" in prompt.lower() or "think about" in prompt.lower():
-            options = [
-                "I'll think about it and get back to you.",
-                "Maybe next month.",
-                "Not sure — call me later."
-            ]
-            return random.choice(options)
-        return "Okay. Tell me more."
-
-    def synthesize_tts_base64(self, text, voice_id=None):
-        fake_b64 = ("BASE64_AUDIO_" + uuid.uuid4().hex)[:120]
-        return fake_b64
-
 class SmallestClientWrapper:
     def __init__(self, api_key=None, force_mock=False):
         self.api_key = api_key or os.environ.get("SMALLEST_API_KEY")
@@ -102,11 +45,18 @@ class SmallestClientWrapper:
             raise RuntimeError(f"create_agent_failed: {e}")
 
     def converse_text(self, agent_id, user_message):
-        # The Atoms SDK does not expose a simple text chat endpoint in this package.
-        # Raise a clear error so the API does not silently mock.
-        raise RuntimeError("Text conversation is not supported via AtomsClient SDK in this build. Implement a conversation endpoint or remove this feature.")
+        # Temporary text reply fallback until a chat endpoint is available via SDK.
+        # Keeps the pipeline working so TTS can be produced by Waves.
+        if not user_message:
+            return "I didn't catch that. Could you please repeat?"
+        trimmed = user_message.strip()
+        if len(trimmed) > 400:
+            trimmed = trimmed[:400] + "…"
+        return f"You said: {trimmed}"
 
     def synthesize_tts_base64(self, text, voice_id=None):
+        if voice_id is None:
+            voice_id = os.environ.get("SMALLEST_VOICE_ID") or None
         resp = self.waves_client.synthesize(text=text, voice_id=voice_id)
         if isinstance(resp, bytes):
             import base64

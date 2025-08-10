@@ -13,6 +13,7 @@ from session_manager import SessionManager
 from personas import PERSONAS
 from stt import transcribe_audio_deepgram
 from analysis import analyze_with_openai
+from reply import generate_reply_text
 
 class CreateSessionReq(BaseModel):
     persona_key: str
@@ -84,6 +85,23 @@ async def upload_audio(session_id: str, file: UploadFile = File(...)):
         reply = ""
         tts_b64 = ""
     return {'transcript': transcript, 'reply_text': reply, 'tts_base64': tts_b64}
+
+@app.post("/voice/{session_id}")
+async def voice_exchange(session_id: str, file: UploadFile = File(...)):
+    if session_id not in session_mgr.sessions:
+        raise HTTPException(status_code=404, detail="session not found")
+    content = await file.read()
+    transcript = transcribe_audio_deepgram(content, filename=file.filename)
+    # Append transcript
+    session_mgr.sessions[session_id]['messages'].append({'role': 'rep', 'text': transcript})
+    # Produce a reply text (OpenAI if available, else heuristic) and TTS
+    agent_id = session_mgr.sessions[session_id]['agent_id']
+    persona_key = session_mgr.sessions[session_id]['persona_key']
+    persona = PERSONAS.get(persona_key, {})
+    reply_text = generate_reply_text(session_mgr.sessions[session_id]['messages'], persona.get('prompt', ''))
+    tts_b64 = smallest.synthesize_tts_base64(reply_text)
+    session_mgr.sessions[session_id]['messages'].append({'role': 'customer', 'text': reply_text})
+    return { 'transcript': transcript, 'reply_text': reply_text, 'tts_base64': tts_b64 }
 
 @app.post("/sessions/{session_id}/end")
 def end_session(session_id: str):
